@@ -6,10 +6,11 @@ import { fireworks } from "@ai-sdk/fireworks";
 import { generateObject } from "ai";
 import { z } from "zod";
 
-// Environment variables
+// --- Env vars ---
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const fireworksApiKey = process.env.FIREWORKS_API_KEY;
-const baseUrl = process.env.BASE_URL || "https://sentient-climate.vercel.app";
+if (!token) throw new Error("Missing TELEGRAM_BOT_TOKEN");
+if (!fireworksApiKey) throw new Error("Missing FIREWORKS_API_KEY");
 
 // --- Zod schemas ---
 const WeatherInfo = z.object({
@@ -35,32 +36,19 @@ const Output = z.object({
   activity_recommendations: z.array(z.string()).optional(),
 });
 
-// --- Create bot in webhook mode (Vercel handles requests, no local port) ---
-const bot = new TelegramBot(token, { webHook: false });
+// --- Telegram bot in webhook mode ---
+const bot = new TelegramBot(token, { webHook: true });
 
-// Register webhook with Telegram
-bot.setWebHook(`${baseUrl}/api/bot`);
-
-// --- Weather API function ---
+// --- Weather AI function ---
 async function getWeatherInfo(location, preferences = "") {
-  try {
-    const prompt = `
+  const prompt = `
 You are Weather Assistant AI. Given the user’s location and preferences,
 provide current weather information and helpful recommendations.
 
-Return ONLY valid JSON that matches this shape:
+Return ONLY valid JSON:
 {
-"current_weather": {
-"location": string,
-"current_temp"?: number,
-"condition": string,
-"humidity"?: number,
-"wind_speed"?: number,
-"recommendations"?: string[]
-},
-"forecast"?: [
-{"date": string, "high_temp": number, "low_temp": number, "condition": string}
-],
+"current_weather": {...},
+"forecast"?: [...],
 "clothing_suggestions"?: string[],
 "activity_recommendations"?: string[]
 }
@@ -70,21 +58,16 @@ Preferences: ${preferences}
 Date: today
 `;
 
-    const result = await generateObject({
-      model: fireworks(
-        "accounts/sentientfoundation/models/dobby-unhinged-llama-3-3-70b-new",
-        { apiKey: fireworksApiKey }
-      ),
-      schema: Output,
-      prompt,
-      structuredOutputs: false,
-    });
+  const result = await generateObject({
+    model: fireworks(
+      "accounts/sentientfoundation/models/dobby-unhinged-llama-3-3-70b-new",
+      { apiKey: fireworksApiKey }
+    ),
+    schema: Output,
+    prompt,
+  });
 
-    return result.object;
-  } catch (error) {
-    console.error("Weather API error:", error);
-    throw error;
-  }
+  return result.object;
 }
 
 // --- Format weather response ---
@@ -96,52 +79,40 @@ function formatWeatherMessage(weatherData) {
     activity_recommendations,
   } = weatherData;
 
-  let message = `🌤️ **Weather for ${current_weather.location}**\n\n`;
+  let message = `🌤️ *Weather for ${current_weather.location}*\n\n`;
 
-  // Current
-  message += `🌡️ **Current Conditions:**\n`;
-  if (current_weather.current_temp) {
-    message += `Temperature: ${current_weather.current_temp}°C\n`;
-  }
+  if (current_weather.current_temp)
+    message += `🌡️ Temp: ${current_weather.current_temp}°C\n`;
   message += `Condition: ${current_weather.condition}\n`;
 
-  if (current_weather.humidity) {
+  if (current_weather.humidity)
     message += `💧 Humidity: ${current_weather.humidity}%\n`;
-  }
-  if (current_weather.wind_speed) {
-    message += `💨 Wind Speed: ${current_weather.wind_speed} km/h\n`;
-  }
+  if (current_weather.wind_speed)
+    message += `💨 Wind: ${current_weather.wind_speed} km/h\n`;
 
-  // Forecast
   if (forecast?.length) {
-    message += `\n📅 **Forecast (next 3 days):**\n`;
+    message += `\n📅 *Forecast (next 3 days):*\n`;
     forecast.slice(0, 3).forEach((day) => {
       message += `${day.date}: ${day.high_temp}°/${day.low_temp}° - ${day.condition}\n`;
     });
   }
 
-  // Clothing
   if (clothing_suggestions?.length) {
-    message += `\n👕 **What to wear:**\n`;
-    clothing_suggestions.forEach((item) => (message += `• ${item}\n`));
+    message += `\n👕 *What to wear:*\n${clothing_suggestions.map((i) => `• ${i}`).join("\n")}\n`;
   }
 
-  // Activities
   if (activity_recommendations?.length) {
-    message += `\n🎯 **Activity suggestions:**\n`;
-    activity_recommendations.forEach((act) => (message += `• ${act}\n`));
+    message += `\n🎯 *Activities:*\n${activity_recommendations.map((a) => `• ${a}`).join("\n")}\n`;
   }
 
-  // Tips
   if (current_weather.recommendations?.length) {
-    message += `\n💡 **Tips:**\n`;
-    current_weather.recommendations.forEach((tip) => (message += `• ${tip}\n`));
+    message += `\n💡 *Tips:*\n${current_weather.recommendations.map((t) => `• ${t}`).join("\n")}\n`;
   }
 
   return message;
 }
 
-// --- Parse /weather command ---
+// --- Parse /weather ---
 function parseWeatherCommand(text) {
   const cleanText = text.replace(/^\/weather\s*/i, "").trim();
   const parts = cleanText.split(/[,;|]/);
@@ -150,155 +121,44 @@ function parseWeatherCommand(text) {
   return { location, preferences };
 }
 
-// --- Bot handlers ---
+// --- Handlers ---
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
-
   if (!text) return;
 
-  try {
-    if (
-      text.toLowerCase().startsWith("/weather") ||
-      text.toLowerCase().includes("weather") ||
-      text.toLowerCase().startsWith("/w ")
-    ) {
+  if (/^\/weather|weather|^\/w\s/i.test(text)) {
+    const { location, preferences } = parseWeatherCommand(text);
+    if (!location) {
+      return bot.sendMessage(
+        chatId,
+        "🌤️ Please provide a location!\nExample:\n/weather London, running"
+      );
+    }
+    try {
       bot.sendChatAction(chatId, "typing");
-
-      const { location, preferences } = parseWeatherCommand(text);
-
-      if (!location) {
-        bot.sendMessage(
-          chatId,
-          "🌤️ Please provide a location!\n\nExamples:\n• /weather New York\n• /weather London, outdoor activities\n• /weather Tokyo, running"
-        );
-        return;
-      }
-
-      try {
-        const weatherData = await getWeatherInfo(location, preferences);
-        const formattedMessage = formatWeatherMessage(weatherData);
-
-        const buttons = [
-          [{ text: "🌤 Today", callback_data: `today_${location}` }],
-          [{ text: "📅 Tomorrow", callback_data: `tomorrow_${location}` }],
-          [{ text: "🔮 3 Days", callback_data: `3days_${location}` }],
-          [{ text: "🧥 Clothing Tips", callback_data: `clothes_${location}` }],
-          [{ text: "🎯 Activities", callback_data: `activities_${location}` }],
-          [{ text: "📊 Full Forecast", callback_data: `forecast_${location}` }],
-        ];
-
-        await bot.sendMessage(chatId, formattedMessage, {
-          parse_mode: "Markdown",
-          disable_web_page_preview: true,
-          reply_markup: { inline_keyboard: buttons },
-        });
-      } catch (err) {
-        bot.sendMessage(
-          chatId,
-          "❌ Sorry, I couldn't get weather information right now. Please try again."
-        );
-      }
+      const weatherData = await getWeatherInfo(location, preferences);
+      const formatted = formatWeatherMessage(weatherData);
+      await bot.sendMessage(chatId, formatted, { parse_mode: "Markdown" });
+    } catch {
+      bot.sendMessage(chatId, "❌ Could not fetch weather info.");
     }
-  } catch (error) {
-    bot.sendMessage(chatId, "❌ Something went wrong. Please try again.");
   }
 });
 
-// Button clicks
-bot.on("callback_query", async (callbackQuery) => {
-  const chatId = callbackQuery.message.chat.id;
-  const data = callbackQuery.data;
-
-  await bot.answerCallbackQuery(callbackQuery.id);
-
-  const [action, location] = data.split("_");
-
-  try {
-    const weatherData = await getWeatherInfo(location);
-
-    if (action === "today") {
-      const today = weatherData.forecast?.[0];
-      if (today) {
-        await bot.sendMessage(
-          chatId,
-          `🌤️ *Today's Forecast for ${location}:*\nHigh: ${today.high_temp}°C\nLow: ${today.low_temp}°C\nCondition: ${today.condition}`,
-          { parse_mode: "Markdown" }
-        );
-      }
-    } else if (action === "tomorrow") {
-      const tomorrow = weatherData.forecast?.[1];
-      if (tomorrow) {
-        await bot.sendMessage(
-          chatId,
-          `📅 *Tomorrow's Forecast for ${location}:*\nHigh: ${tomorrow.high_temp}°C\nLow: ${tomorrow.low_temp}°C\nCondition: ${tomorrow.condition}`,
-          { parse_mode: "Markdown" }
-        );
-      }
-    } else if (action === "3days") {
-      const next3 = weatherData.forecast?.slice(0, 3);
-      if (next3?.length) {
-        let msg = `🔮 *3-Day Forecast for ${location}:*\n\n`;
-        next3.forEach(
-          (day) =>
-            (msg += `${day.date}: ${day.high_temp}°/${day.low_temp}° - ${day.condition}\n`)
-        );
-        await bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
-      }
-    } else if (action === "clothes") {
-      if (weatherData.clothing_suggestions?.length) {
-        let msg = `🧥 *Clothing Tips for ${location}:*\n\n`;
-        weatherData.clothing_suggestions.forEach(
-          (item) => (msg += `• ${item}\n`)
-        );
-        await bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
-      }
-    } else if (action === "activities") {
-      if (weatherData.activity_recommendations?.length) {
-        let msg = `🎯 *Activity Suggestions for ${location}:*\n\n`;
-        weatherData.activity_recommendations.forEach(
-          (act) => (msg += `• ${act}\n`)
-        );
-        await bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
-      }
-    } else if (action === "forecast") {
-      if (weatherData.forecast?.length) {
-        let msg = `📊 *Full Forecast for ${location}:*\n\n`;
-        weatherData.forecast.forEach(
-          (day) =>
-            (msg += `${day.date}: ${day.high_temp}°/${day.low_temp}° - ${day.condition}\n`)
-        );
-        await bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
-      }
-    }
-  } catch {
-    bot.sendMessage(chatId, "❌ Could not fetch info for that option.");
-  }
-});
-
-// Commands
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    "🌤️ **Weather Bot is ready!**\n\nCommands:\n• /weather [location] - Get current weather\n• /weather [location], [preferences] - Get personalized weather info",
+    "🌤️ *Weather Bot ready!*\nUse `/weather [location]`",
     { parse_mode: "Markdown" }
   );
 });
 
-bot.onText(/\/help/, (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-    "🌤️ **Weather Bot Help**\n\nExamples:\n• `/weather New York`\n• `/weather London, running`\n• `/weather Tokyo, business casual`",
-    { parse_mode: "Markdown" }
-  );
-});
-
-// --- Vercel API handler ---
+// --- Vercel handler ---
 export default async function handler(req, res) {
   if (req.method === "POST") {
     bot.processUpdate(req.body);
-    res.status(200).send("ok");
-  } else {
-    res.status(200).send("Weather Bot is running!");
+    return res.status(200).send("ok");
   }
+  res.status(200).send("Weather Bot is running!");
 }
