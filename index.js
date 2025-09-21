@@ -1,5 +1,5 @@
 import "dotenv/config";  // loads .env
-import "./bot.js";       // starts your Telegram bot
+import "./api/bot.js";       // starts your Telegram bot
 import express from "express";
 
 const app = express();

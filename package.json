@@ -1,10 +1,10 @@
 {
-  "name": "telegram-bot",
+  "name": "telegram-weather-bot",
   "version": "1.0.0",
-  "main": "bot.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node bot.js"
+    "dev": "node api/bot.js",
+    "start": "node api/bot.js"
   },
   "keywords": [],
   "author": "",
