@@ -35,10 +35,10 @@ clothing_suggestions: z.array(z.string()).optional(),
 activity_recommendations: z.array(z.string()).optional(),
 });
 
-// --- Create bot in webhook mode (NO polling) ---
-const bot = new TelegramBot(token, { webHook: { port: 443 } });
+// --- Create bot in webhook mode (Vercel handles requests, no local port) ---
+const bot = new TelegramBot(token, { webHook: false });
 
-// Register webhook with Telegram (once per deploy)
+// Register webhook with Telegram
 bot.setWebHook(`${baseUrl}/api/bot`);
 
 // --- Weather API function ---
@@ -150,7 +150,7 @@ const preferences = parts.slice(1).join(" ").trim() || "";
 return { location, preferences };
 }
 
-// --- Bot handlers (same as your version) ---
+// --- Bot handlers ---
 bot.on("message", async (msg) => {
 const chatId = msg.chat.id;
 const text = msg.text;
