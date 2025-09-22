@@ -40,7 +40,8 @@ activity_recommendations: z.array(z.string()).optional(),
 // const bot = new TelegramBot(token, { polling: true });
 
 const bot = new TelegramBot(token);
-bot.setWebHook(`${process.env.VERCEL_URL}/api/webhook`);
+// bot.setWebHook(`${process.env.VERCEL_URL}/api/webhook`);
+bot.setWebHook(`https://sentient-climate.vercel.app/api/webhook`);
 
 // Weather API function
 async function getWeatherInfo(location, preferences = "") {
